@@ -1,0 +1,1016 @@
+// blackhole_final_optimized.cpp
+// Полная симуляция вращающейся черной дыры Керра (Супер-оптимизированная версия)
+
+#define _CRT_SECURE_NO_WARNINGS
+#define _USE_MATH_DEFINES
+#define NOMINMAX
+
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstdint>
+#include <cstring>
+#include <iostream>
+#include <vector>
+#include <array>
+#include <list>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <chrono>
+#include <random>
+#include <algorithm>
+#include <functional>
+#include <SDL.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#pragma comment(lib, "SDL2.lib")
+#pragma comment(lib, "SDL2main.lib")
+#pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "winmm.lib")
+
+using namespace std;
+using u8 = uint8_t;
+
+// ==================== ЦВЕТ КОНСОЛИ ====================
+#ifdef _WIN32
+void setConsoleGreen() {
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleTextAttribute(hConsole, 10); // Зеленый
+}
+
+void resetConsoleColor() {
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleTextAttribute(hConsole, 7); // Белый
+}
+#else
+void setConsoleGreen() {
+    printf("\033[0;32m"); // Зеленый для Linux
+}
+void resetConsoleColor() {
+    printf("\033[0m"); // Сброс цвета
+}
+#endif
+
+// ==================== ГЛОБАЛЬНЫЕ КОНСТАНТЫ (ОПТИМИЗИРОВАННЫЕ) ====================
+const int RENDER_W = 320;  // Низкое разрешение для скорости
+const int RENDER_H = 180;
+const int DISPLAY_W = 1280;
+const int DISPLAY_H = 720;
+
+// ==================== ПРЕДУПРЕЖДАЮЩЕЕ ОКНО WINDOWS ====================
+bool show_warning_dialog() {
+#ifdef _WIN32
+    int result = MessageBoxA(
+        NULL,
+        "! ВНИМАНИЕ: СИМУЛЯЦИЯ ЧЕРНОЙ ДЫРЫ КЕРРА !\n\n"
+        "• Сверхбыстрое вращение черной дыры (a = 0.99)\n"
+        "• Хаотичный аккреционный диск с турбулентностью\n"
+        "• Фотоны оставляют длинные траектории\n"
+        "• Максимальная оптимизация для производительности\n\n"
+        "Программа может сильно нагружать процессор.\n"
+        "Запускайте на свой страх и риск."
+        "дальше бога нет ",
+        "ЧЕРНАЯ ДЫРА КЕРРА - СУПЕР ОПТИМИЗИРОВАННАЯ",
+        MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2
+    );
+    return (result == IDYES);
+#else
+    setConsoleGreen();
+    cout << "⚠️ ВНИМАНИЕ: Симуляция может нагружать процессор! Продолжить? (y/n): ";
+    resetConsoleColor();
+    char c;
+    cin >> c;
+    return (c == 'y' || c == 'Y');
+#endif
+}
+
+// ==================== ВЕКТОРНАЯ МАТЕМАТИКА (СУПЕР-ОПТИМИЗИРОВАННАЯ) ====================
+struct Vec3 {
+    float x, y, z;
+
+    Vec3() : x(0.0f), y(0.0f), z(0.0f) {}
+    Vec3(float a, float b, float c) : x(a), y(b), z(c) {}
+
+    // Быстрые inline операции
+    Vec3 operator-() const { return Vec3(-x, -y, -z); }
+    Vec3& operator+=(const Vec3& v) { x += v.x; y += v.y; z += v.z; return *this; }
+    Vec3& operator-=(const Vec3& v) { x -= v.x; y -= v.y; z -= v.z; return *this; }
+    Vec3& operator*=(float s) { x *= s; y *= s; z *= s; return *this; }
+    Vec3& operator/=(float s) { float inv = 1.0f / s; x *= inv; y *= inv; z *= inv; return *this; }
+};
+
+inline Vec3 operator+(const Vec3& a, const Vec3& b) { return Vec3(a.x + b.x, a.y + b.y, a.z + b.z); }
+inline Vec3 operator-(const Vec3& a, const Vec3& b) { return Vec3(a.x - b.x, a.y - b.y, a.z - b.z); }
+inline Vec3 operator*(const Vec3& a, float s) { return Vec3(a.x * s, a.y * s, a.z * s); }
+inline Vec3 operator*(float s, const Vec3& a) { return a * s; }
+inline Vec3 operator/(const Vec3& a, float s) { float inv = 1.0f / s; return Vec3(a.x * inv, a.y * inv, a.z * inv); }
+
+inline float dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+inline Vec3 cross(const Vec3& a, const Vec3& b) {
+    return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+inline float length_sq(const Vec3& a) { return dot(a, a); }
+inline float length(const Vec3& a) { return sqrtf(dot(a, a)); }
+inline Vec3 normalize(const Vec3& a) { float l = length(a); return (l > 1e-10f) ? a / l : a; }
+
+template<typename T>
+inline T clamp(T x, T min_val, T max_val) {
+    return (x < min_val) ? min_val : (x > max_val) ? max_val : x;
+}
+
+// ==================== МЕТРИКА КЕРРА (СТАБИЛИЗИРОВАННАЯ) ====================
+class KerrMetric {
+private:
+    float M, a, a_sq, M_sq;
+    float horizon_radius;
+
+public:
+    KerrMetric(float mass, float spin) :
+        M(fmaxf(mass, 0.1f)),
+        a(clamp(spin, -0.99f, 0.99f)* M),
+        a_sq(a* a),
+        M_sq(M* M),
+        horizon_radius(M + sqrtf(M_sq - a_sq)) {
+    }
+
+    float get_mass() const { return M; }
+    float get_spin() const { return a / M; }
+    float event_horizon() const { return horizon_radius; }
+
+    // Стабильная проверка на горизонт событий
+    bool inside_horizon(const Vec3& pos) const {
+        float r_sq = length_sq(pos);
+        float r = sqrtf(r_sq);
+        return r < horizon_radius * 1.1f; // Немного увеличен для визуализации
+    }
+
+    // Стабилизированное вычисление геодезической (убрана хаотичность)
+    void photon_geodesic(const Vec3& pos, const Vec3& dir, Vec3& accel) const {
+        float r_sq = length_sq(pos);
+        float r = sqrtf(r_sq);
+
+        // Если слишком близко к горизонту - сильное притяжение к центру
+        if (r < horizon_radius * 2.0f) {
+            accel = (-pos / r) * (10.0f * M / (r_sq + 0.1f));
+            return;
+        }
+
+        float inv_r3 = 1.0f / (r_sq * r);
+
+        // Гравитационное притяжение
+        Vec3 newton = (3.0f * M * inv_r3) * (-pos / r);
+
+        // Эффект увлечения для вращающейся черной дыры (стабильный)
+        float frame_drag = 4.0f * a * dir.z * inv_r3;
+        Vec3 rotation_effect = cross(Vec3(0.0f, 0.0f, 1.0f), dir) * frame_drag;
+
+        // Легкое искажение пространства (без хаоса)
+        float space_warp = 0.5f * sinf(r * 0.3f) * expf(-r / (8.0f * M));
+        Vec3 warp_vec = Vec3(dir.y * space_warp, -dir.x * space_warp, 0.0f) * 0.1f;
+
+        accel = newton + rotation_effect * 0.2f + warp_vec;
+    }
+};
+
+// ==================== ФОТОН С ДЛИННОЙ ТРАЕКТОРИЕЙ ====================
+struct Photon {
+    vector<Vec3> path;
+    Vec3 color;
+    float current_brightness;
+    bool alive;
+    int max_points;
+
+    Photon(const Vec3& start, const Vec3& dir, const Vec3& col) :
+        color(col), current_brightness(1.0f), alive(true), max_points(1500) {
+        path.reserve(max_points);
+        path.push_back(start);
+        path.push_back(start + dir * 0.05f);
+    }
+
+    void update(const KerrMetric& metric, float dt, const Vec3& camera_pos) {
+        if (!alive) return;
+
+        Vec3 pos = path.back();
+        Vec3 dir_vec = (path.size() > 1) ? normalize(pos - path[path.size() - 2]) : Vec3(1.0f, 0.0f, 0.0f);
+
+        // Проверка на горизонт
+        if (metric.inside_horizon(pos)) {
+            current_brightness *= 0.8f;
+            if (current_brightness < 0.01f) {
+                alive = false;
+            }
+            return;
+        }
+
+        // Интегрирование геодезической
+        Vec3 accel;
+        metric.photon_geodesic(pos, dir_vec, accel);
+        dir_vec = normalize(dir_vec + accel * dt);
+        Vec3 new_pos = pos + dir_vec * dt * 1.5f;
+
+        // Проверка на уход слишком далеко
+        float dist_to_camera = length(new_pos - camera_pos);
+        if (dist_to_camera > 120.0f * metric.event_horizon()) {
+            alive = false;
+            return;
+        }
+
+        // Добавляем точку в траекторию
+        path.push_back(new_pos);
+        current_brightness *= 0.995f;  // Медленное затухание
+
+        // Ограничиваем количество точек
+        if (path.size() > max_points) {
+            path.erase(path.begin(), path.begin() + max_points / 2);
+        }
+    }
+};
+
+// ==================== СТАБИЛИЗИРОВАННЫЙ АККРЕЦИОННЫЙ ДИСК ====================
+class AccretionDisk {
+private:
+    float inner_radius, outer_radius, M, a;
+    float time, rotation_speed;
+    vector<float> turbulence;
+    vector<Vec3> hot_spots;
+
+public:
+    AccretionDisk(float mass, float spin) :
+        M(mass), a(spin), time(0.0f), rotation_speed(1.0f + fabsf(spin) * 2.0f) {
+
+        // Реалистичные размеры диска
+        inner_radius = fmaxf(1.5f, 1.5f * (M + sqrtf(M * M - a * a)));
+        outer_radius = 8.0f * M;
+
+        // Турбулентность
+        mt19937 rng(12345);
+        uniform_real_distribution<float> dist(0.0f, 1.0f);
+        turbulence.resize(100);
+        for (auto& t : turbulence) t = dist(rng);
+
+        // Горячие пятна
+        hot_spots.clear();
+        for (int i = 0; i < 15; i++) {
+            float r = inner_radius + dist(rng) * (outer_radius - inner_radius);
+            float angle = dist(rng) * 2.0f * 3.14159265f;
+            hot_spots.push_back(Vec3(r * cosf(angle), r * sinf(angle), 0.0f));
+        }
+    }
+
+    void update(float dt) {
+        time += dt;
+        // Медленное вращение пятен
+        for (auto& spot : hot_spots) {
+            float r = sqrtf(spot.x * spot.x + spot.y * spot.y);
+            float angle = atan2f(spot.y, spot.x) + dt * rotation_speed * (inner_radius / r);
+            spot.x = r * cosf(angle);
+            spot.y = r * sinf(angle);
+        }
+    }
+
+    Vec3 get_color(const Vec3& pos) const {
+        float r = sqrtf(pos.x * pos.x + pos.y * pos.y);
+        if (r < inner_radius * 0.9f || r > outer_radius * 1.1f)
+            return Vec3(0.0f, 0.0f, 0.0f);
+
+        // Градиент цвета от горячего к холодному
+        float t = (r - inner_radius) / (outer_radius - inner_radius);
+        Vec3 inner_color = Vec3(1.0f, 0.6f, 0.2f);   // Оранжевый
+        Vec3 outer_color = Vec3(0.2f, 0.5f, 1.0f);   // Синий
+        Vec3 base_color = inner_color * (1.0f - t) + outer_color * t;
+
+        // Легкая турбулентность
+        float turb = turbulence[(int)(r * 3) % turbulence.size()] * 0.3f;
+        base_color = base_color * (0.8f + 0.4f * sinf(time * 2.0f + r) * turb);
+
+        // Горячие пятна
+        for (const auto& spot : hot_spots) {
+            float dx = pos.x - spot.x;
+            float dy = pos.y - spot.y;
+            float dist_sq = dx * dx + dy * dy;
+            float spot_size = 0.4f * M;
+
+            if (dist_sq < spot_size * spot_size) {
+                float intensity = 1.0f - sqrtf(dist_sq) / spot_size;
+                base_color += Vec3(1.0f, 0.8f, 0.5f) * intensity * 0.5f;
+            }
+        }
+
+        // Яркость уменьшается с расстоянием
+        float brightness = 1.0f / (1.0f + 0.1f * r / M);
+
+        // Легкое свечение по краям
+        if (r > outer_radius * 0.9f) {
+            float edge = 1.0f - (r - outer_radius * 0.9f) / (outer_radius * 0.2f);
+            base_color += Vec3(0.5f, 0.6f, 1.0f) * edge * 0.2f;
+        }
+
+        return base_color * brightness;
+    }
+
+    bool intersect(const Vec3& start, const Vec3& dir, Vec3& hit_point, float& distance) const {
+        if (fabsf(dir.z) < 1e-10f) return false;
+        float t = -start.z / dir.z;
+        if (t <= 0) return false;
+        hit_point = start + dir * t;
+        float r = sqrtf(hit_point.x * hit_point.x + hit_point.y * hit_point.y);
+        if (r >= inner_radius * 0.9f && r <= outer_radius * 1.1f) {
+            distance = t;
+            return true;
+        }
+        return false;
+    }
+};
+
+// ==================== СТАБИЛИЗИРОВАННАЯ СИСТЕМА РЕНДЕРИНГА ====================
+class RenderSystem {
+private:
+    KerrMetric metric;
+    AccretionDisk disk;
+
+    // Простые звезды
+    vector<Vec3> stars;
+    vector<float> star_brightness;
+
+    // Камера
+    Vec3 camera_pos, camera_lookat, camera_up;
+    float camera_fov;
+
+    // Фотоны
+    list<Photon> photons;
+    mutex photon_mutex;
+
+public:
+    RenderSystem(float mass, float spin) :
+        metric(mass, spin),
+        disk(mass, spin) {
+
+        camera_up = Vec3(0.0f, 1.0f, 0.0f);
+        camera_fov = 60.0f * 3.14159265f / 180.0f;
+
+        generate_star_field(800);
+    }
+
+    size_t get_photon_count() {
+        lock_guard<mutex> lock(photon_mutex);
+        return photons.size();
+    }
+
+    void set_camera(const Vec3& pos, const Vec3& lookat) {
+        camera_pos = pos;
+        camera_lookat = lookat;
+    }
+
+    void add_photon(const Vec3& start, const Vec3& dir) {
+        lock_guard<mutex> lock(photon_mutex);
+        static mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
+        uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+        Vec3 color;
+        float rnd = dist(rng);
+        if (rnd < 0.4f) color = Vec3(1.0f, 0.4f, 0.2f);
+        else if (rnd < 0.7f) color = Vec3(0.3f, 0.8f, 1.0f);
+        else color = Vec3(0.8f, 0.3f, 0.8f);
+
+        photons.emplace_back(start, dir, color);
+
+        if (photons.size() > 20) {
+            photons.pop_front();
+        }
+    }
+
+    void clear_photons() {
+        lock_guard<mutex> lock(photon_mutex);
+        photons.clear();
+    }
+
+    void update_photons(float dt) {
+        lock_guard<mutex> lock(photon_mutex);
+        for (auto& photon : photons) {
+            photon.update(metric, dt, camera_pos);
+        }
+        photons.remove_if([](const Photon& p) { return !p.alive; });
+    }
+
+    void update_disk(float dt) {
+        disk.update(dt);
+    }
+
+private:
+    void generate_star_field(int num_stars) {
+        stars.clear();
+        star_brightness.clear();
+        mt19937 rng(12345);
+        uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+        for (int i = 0; i < num_stars; i++) {
+            float theta = acosf(2.0f * dist(rng) - 1.0f);
+            float phi = 2.0f * 3.14159265f * dist(rng);
+
+            stars.push_back(Vec3(sinf(theta) * cosf(phi),
+                sinf(theta) * sinf(phi),
+                cosf(theta)));
+
+            float b = dist(rng);
+            if (b > 0.95f) star_brightness.push_back(1.5f);
+            else if (b > 0.8f) star_brightness.push_back(0.9f);
+            else star_brightness.push_back(0.4f + dist(rng) * 0.3f);
+        }
+    }
+
+    Vec3 trace_ray(const Vec3& ray_dir) {
+        Vec3 pos = camera_pos;
+        Vec3 dir = ray_dir;
+        float step_size = 0.5f;
+
+        // Трассировка с постепенным увеличением точности около черной дыры
+        for (int step = 0; step < 300; step++) {
+            float r_sq = length_sq(pos);
+            float r = sqrtf(r_sq);
+
+            // Если внутри горизонта событий - черный цвет
+            if (metric.inside_horizon(pos)) {
+                // Черная дыра - абсолютно черная с легким сиянием на горизонте
+                float horizon_proximity = 1.0f - (r / (metric.event_horizon() * 1.1f));
+                if (horizon_proximity > 0.95f) {
+                    // Очень легкое сияние на самом горизонте
+                    return Vec3(0.02f, 0.01f, 0.03f) * horizon_proximity;
+                }
+                return Vec3(0.0f, 0.0f, 0.0f);
+            }
+
+            // Проверка на аккреционный диск
+            Vec3 hit_point;
+            float distance;
+            if (disk.intersect(pos, dir, hit_point, distance)) {
+                if (distance < step_size * 3.0f) {
+                    Vec3 color = disk.get_color(hit_point);
+
+                    // Доплеровский эффект для вращающегося диска
+                    float r_disk = sqrtf(hit_point.x * hit_point.x + hit_point.y * hit_point.y);
+                    Vec3 velocity = Vec3(-hit_point.y, hit_point.x, 0.0f);
+                    velocity = normalize(velocity) * sqrtf(metric.event_horizon() / (r_disk + 0.1f));
+                    float doppler = 1.0f / (1.0f - dot(velocity, dir) * 0.6f);
+                    doppler = clamp(doppler, 0.5f, 2.0f);
+
+                    return color * doppler;
+                }
+            }
+
+            // Если ушли далеко - показываем звезды
+            if (r > 40.0f * metric.event_horizon()) {
+                float best_brightness = 0.0f;
+
+                // Быстрая проверка звезд
+                for (int i = 0; i < min(150, (int)stars.size()); i++) {
+                    float d = dot(stars[i], dir);
+                    if (d > 0.9995f) {
+                        float intensity = powf((d - 0.9995f) / 0.0005f, 2.0f);
+                        if (intensity * star_brightness[i] > best_brightness) {
+                            best_brightness = intensity * star_brightness[i];
+                        }
+                    }
+                }
+
+                if (best_brightness > 0.0f) {
+                    return Vec3(best_brightness, best_brightness, best_brightness);
+                }
+                return Vec3(0.04f, 0.04f, 0.06f);
+            }
+
+            // Интегрирование геодезической с адаптивным шагом
+            float adaptive_step = step_size;
+            if (r < metric.event_horizon() * 3.0f) {
+                adaptive_step *= 0.5f; // Меньший шаг около черной дыры
+            }
+
+            Vec3 accel;
+            metric.photon_geodesic(pos, dir, accel);
+            dir = normalize(dir + accel * adaptive_step);
+            pos = pos + dir * adaptive_step;
+        }
+
+        return Vec3(0.08f, 0.08f, 0.12f);
+    }
+
+    void draw_line_fast(vector<u8>& buffer, int width, int height,
+        int x1, int y1, int x2, int y2,
+        const Vec3& color, float brightness) {
+        int dx = abs(x2 - x1), sx = x1 < x2 ? 1 : -1;
+        int dy = -abs(y2 - y1), sy = y1 < y2 ? 1 : -1;
+        int err = dx + dy;
+
+        float r = color.x * brightness * 0.4f;
+        float g = color.y * brightness * 0.4f;
+        float b = color.z * brightness * 0.4f;
+
+        while (true) {
+            if (x1 >= 0 && x1 < width && y1 >= 0 && y1 < height) {
+                int idx = (y1 * width + x1) * 3;
+                buffer[idx] = min(255, buffer[idx] + (int)(r * 255));
+                buffer[idx + 1] = min(255, buffer[idx + 1] + (int)(g * 255));
+                buffer[idx + 2] = min(255, buffer[idx + 2] + (int)(b * 255));
+            }
+
+            if (x1 == x2 && y1 == y2) break;
+            int e2 = 2 * err;
+            if (e2 >= dy) { err += dy; x1 += sx; }
+            if (e2 <= dx) { err += dx; y1 += sy; }
+        }
+    }
+
+public:
+    void render_frame(vector<u8>& buffer, int width, int height) {
+        buffer.resize(width * height * 3, 0);
+
+        // Базис камеры
+        Vec3 camera_dir = normalize(camera_lookat - camera_pos);
+        Vec3 camera_right = normalize(cross(camera_dir, camera_up));
+        Vec3 camera_up_real = cross(camera_right, camera_dir);
+
+        float aspect = (float)width / height;
+        float half_height = tanf(camera_fov * 0.5f);
+        float half_width = aspect * half_height;
+
+        float inv_width = 1.0f / width;
+        float inv_height = 1.0f / height;
+
+        // Стабильный рендеринг
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                // Пропускаем каждый 3-й пиксель для скорости
+                if ((x + y) % 3 == 0 && x > 0 && y > 0) {
+                    int idx = (y * width + x) * 3;
+                    int prev_idx = ((y)*width + (x - 1)) * 3;
+                    buffer[idx] = buffer[prev_idx];
+                    buffer[idx + 1] = buffer[prev_idx + 1];
+                    buffer[idx + 2] = buffer[prev_idx + 2];
+                    continue;
+                }
+
+                float u = ((x + 0.5f) * inv_width - 0.5f) * 2.0f * half_width;
+                float v = ((height - y - 0.5f) * inv_height - 0.5f) * 2.0f * half_height;
+
+                Vec3 ray_dir = normalize(camera_right * u + camera_up_real * v + camera_dir);
+
+                Vec3 color = trace_ray(ray_dir);
+
+                int idx = (y * width + x) * 3;
+                buffer[idx] = (u8)(clamp(color.x, 0.0f, 1.0f) * 255);
+                buffer[idx + 1] = (u8)(clamp(color.y, 0.0f, 1.0f) * 255);
+                buffer[idx + 2] = (u8)(clamp(color.z, 0.0f, 1.0f) * 255);
+            }
+        }
+
+        // Отрисовка траекторий фотонов
+        render_photons(buffer, width, height);
+    }
+
+    void render_photons(vector<u8>& buffer, int width, int height) {
+        lock_guard<mutex> lock(photon_mutex);
+
+        Vec3 camera_dir = normalize(camera_lookat - camera_pos);
+        Vec3 camera_right = normalize(cross(camera_dir, camera_up));
+        Vec3 camera_up_real = cross(camera_right, camera_dir);
+
+        float aspect = (float)width / height;
+        float half_height = tanf(camera_fov * 0.5f);
+        float half_width = aspect * half_height;
+
+        for (const auto& photon : photons) {
+            if (photon.path.size() < 2) continue;
+
+            for (size_t i = 1; i < photon.path.size(); i++) {
+                const Vec3& p1 = photon.path[i - 1];
+                const Vec3& p2 = photon.path[i];
+
+                Vec3 v1 = p1 - camera_pos;
+                Vec3 v2 = p2 - camera_pos;
+
+                float dot1 = dot(v1, camera_dir);
+                float dot2 = dot(v2, camera_dir);
+
+                if (dot1 <= 0 || dot2 <= 0) continue;
+
+                Vec3 proj1 = v1 / dot1;
+                Vec3 proj2 = v2 / dot2;
+
+                float x1 = dot(proj1, camera_right) / half_width;
+                float y1 = dot(proj1, camera_up_real) / half_height;
+                float x2 = dot(proj2, camera_right) / half_width;
+                float y2 = dot(proj2, camera_up_real) / half_height;
+
+                int px1 = (int)((x1 * 0.5f + 0.5f) * width);
+                int py1 = (int)((0.5f - y1 * 0.5f) * height);
+                int px2 = (int)((x2 * 0.5f + 0.5f) * width);
+                int py2 = (int)((0.5f - y2 * 0.5f) * height);
+
+                if (abs(px1 - px2) + abs(py1 - py2) < 80) {
+                    float brightness = photon.current_brightness * 0.7f;
+                    draw_line_fast(buffer, width, height, px1, py1, px2, py2,
+                        photon.color, brightness);
+                }
+            }
+        }
+    }
+};
+
+// ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
+RenderSystem* renderer = nullptr;
+vector<u8> render_buffer;
+mutex render_mutex;
+atomic<bool> rendering(false);
+atomic<bool> stop_render(false);
+atomic<int> frames_rendered(0);
+
+Vec3 camera_pos;
+Vec3 camera_lookat = Vec3(0.0f, 0.0f, 0.0f);
+float camera_yaw = 0.0f;
+float camera_pitch = 0.3f;
+float camera_distance = 40.0f;
+float target_camera_distance = 40.0f;
+
+// ПАРАМЕТРЫ ПО УМОЛЧАНИЮ
+float black_hole_mass = 5.0f;
+float black_hole_spin = 0.7f;
+bool show_photons = true;
+bool show_accretion_disk = true;
+
+// ==================== ПОТОК РЕНДЕРИНГА ====================
+void render_thread_func() {
+    auto last_render_time = chrono::steady_clock::now();
+
+    while (!stop_render) {
+        auto now = chrono::steady_clock::now();
+        auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - last_render_time);
+
+        if (elapsed.count() < 33) {
+            this_thread::sleep_for(chrono::milliseconds(1));
+            continue;
+        }
+
+        if (!rendering) {
+            rendering = true;
+
+            // Обновление камеры
+            camera_pos.x = camera_distance * cosf(camera_pitch) * cosf(camera_yaw);
+            camera_pos.y = camera_distance * sinf(camera_pitch);
+            camera_pos.z = camera_distance * cosf(camera_pitch) * sinf(camera_yaw);
+
+            if (renderer) {
+                renderer->set_camera(camera_pos, camera_lookat);
+                if (show_accretion_disk) {
+                    renderer->update_disk(0.033f);
+                }
+
+                vector<u8> temp_buffer;
+                renderer->render_frame(temp_buffer, RENDER_W, RENDER_H);
+
+                if (show_photons) {
+                    renderer->update_photons(0.033f);
+                }
+
+                {
+                    lock_guard<mutex> lock(render_mutex);
+                    render_buffer.swap(temp_buffer);
+                }
+
+                frames_rendered++;
+            }
+
+            rendering = false;
+            last_render_time = now;
+        }
+
+        this_thread::sleep_for(chrono::milliseconds(1));
+    }
+}
+
+// ==================== КОНСОЛЬНОЕ МЕНЮ ====================
+void console_menu() {
+    setConsoleGreen();
+    system("cls");
+
+    cout << "╔══════════════════════════════════════════════════════════╗\n";
+    cout << "║  СИМУЛЯЦИЯ ЧЕРНОЙ ДЫРЫ КЕРРА - СТАБИЛИЗИРОВАННАЯ       ║\n";
+    cout << "╚══════════════════════════════════════════════════════════╝\n\n";
+
+    cout << "Текущие параметры:\n";
+    cout << "  1. Масса черной дыры (M): " << black_hole_mass << "\n";
+    cout << "  2. Спин черной дыры (a/M, от -0.99 до 0.99): " << black_hole_spin << "\n";
+    cout << "  3. Начальное расстояние камеры: " << camera_distance << "\n";
+    cout << "  4. Показать аккреционный диск: " << (show_accretion_disk ? "ДА" : "НЕТ") << "\n";
+    cout << "  5. Показать фотоны: " << (show_photons ? "ДА" : "НЕТ") << "\n";
+    cout << "  6. Разрешение рендеринга: " << RENDER_W << "x" << RENDER_H << "\n\n";
+
+    cout << "Управление в симуляции:\n";
+    cout << "  • WASD + QE - движение камеры\n";
+    cout << "  • Правая кнопка мыши + движение - вращение камеры\n";
+    cout << "  • Колесо мыши - приближение/отдаление\n";
+    cout << "  • Левая кнопка мыши - запуск фотона\n";
+    cout << "  • ПРОБЕЛ - запуск фотона из центра камеры\n";
+    cout << "  • P - удалить все фотоны\n";
+    cout << "  • R - перезапуск с новыми параметрами\n";
+    cout << "  • ESC - выход\n\n";
+
+    cout << "ОПТИМИЗАЦИЯ:\n";
+    cout << "  • Разрешение: " << RENDER_W << "x" << RENDER_H << " (рендер) -> " << DISPLAY_W << "x" << DISPLAY_H << " (дисплей)\n";
+    cout << "  • Стабилизированный рендеринг\n";
+    cout << "  • Убрана хаотичность\n";
+    cout << "  • Черная дыра как стабильный черный шар\n\n";
+
+    bool config_done = false;
+    while (!config_done) {
+        cout << "Выберите параметр для изменения (1-6) или 0 для запуска: ";
+        int choice;
+        if (!(cin >> choice)) {
+            cin.clear();
+            cin.ignore(1000, '\n');
+            cout << "Ошибка ввода!\n";
+            continue;
+        }
+
+        switch (choice) {
+        case 0:
+            config_done = true;
+            break;
+
+        case 1:
+            cout << "Введите массу черной дыры (0.5-20): ";
+            cin >> black_hole_mass;
+            black_hole_mass = clamp(black_hole_mass, 0.5f, 20.0f);
+            camera_distance = 10.0f * black_hole_mass;
+            target_camera_distance = camera_distance;
+            break;
+
+        case 2:
+            cout << "Введите спин черной дыры (-0.99 до 0.99): ";
+            cin >> black_hole_spin;
+            black_hole_spin = clamp(black_hole_spin, -0.99f, 0.99f);
+            break;
+
+        case 3:
+            cout << "Введите начальное расстояние камеры: ";
+            cin >> camera_distance;
+            camera_distance = fmaxf(camera_distance, 3.0f * black_hole_mass);
+            target_camera_distance = camera_distance;
+            break;
+
+        case 4:
+            cout << "Показать аккреционный диск? (1=да, 0=нет): ";
+            int show_disk;
+            cin >> show_disk;
+            show_accretion_disk = (show_disk == 1);
+            break;
+
+        case 5:
+            cout << "Показать фотоны? (1=да, 0=нет): ";
+            int show;
+            cin >> show;
+            show_photons = (show == 1);
+            break;
+
+        case 6:
+            cout << "Разрешение зафиксировано для стабильности\n";
+            break;
+
+        default:
+            cout << "Неверный выбор!\n";
+            break;
+        }
+    }
+
+    cout << "\nЗапуск стабилизированной симуляции...\n";
+    resetConsoleColor();
+    this_thread::sleep_for(chrono::seconds(1));
+}
+
+// ==================== ГЛАВНАЯ ФУНКЦИЯ ====================
+int main(int argc, char* argv[]) {
+    if (!show_warning_dialog()) return 0;
+
+    console_menu();
+
+    // Инициализация
+    if (renderer) delete renderer;
+    renderer = new RenderSystem(black_hole_mass, black_hole_spin);
+
+    thread render_thread(render_thread_func);
+
+    // SDL2
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        cerr << "Ошибка SDL: " << SDL_GetError() << endl;
+        return 1;
+    }
+
+    SDL_Window* window = SDL_CreateWindow(
+        "ЧЕРНАЯ ДЫРА КЕРРА - СТАБИЛИЗИРОВАННАЯ",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        DISPLAY_W, DISPLAY_H,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+    );
+
+    if (!window) {
+        cerr << "Ошибка создания окна: " << SDL_GetError() << endl;
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_Renderer* sdl_renderer = SDL_CreateRenderer(
+        window, -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
+    );
+
+    if (!sdl_renderer) {
+        cerr << "Ошибка создания рендерера: " << SDL_GetError() << endl;
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_Texture* texture = SDL_CreateTexture(
+        sdl_renderer,
+        SDL_PIXELFORMAT_RGB24,
+        SDL_TEXTUREACCESS_STREAMING,
+        RENDER_W, RENDER_H
+    );
+
+    if (!texture) {
+        cerr << "Ошибка создания текстуры: " << SDL_GetError() << endl;
+        SDL_DestroyRenderer(sdl_renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    // Основной цикл
+    bool running = true, mouse_look = false;
+    int last_mouse_x = 0, last_mouse_y = 0;
+
+    auto last_time = chrono::high_resolution_clock::now();
+    auto last_fps_time = last_time;
+    int frame_count = 0;
+    float smooth_fps = 60.0f;
+
+    while (running) {
+        auto current_time = chrono::high_resolution_clock::now();
+        float delta_time = chrono::duration<float>(current_time - last_time).count();
+        last_time = current_time;
+
+        // Обработка событий
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            switch (event.type) {
+            case SDL_QUIT:
+                running = false;
+                break;
+
+            case SDL_KEYDOWN:
+                switch (event.key.keysym.sym) {
+                case SDLK_ESCAPE:
+                    running = false;
+                    break;
+                case SDLK_r:
+                    delete renderer;
+                    renderer = new RenderSystem(black_hole_mass, black_hole_spin);
+                    break;
+                case SDLK_p:
+                    if (renderer) renderer->clear_photons();
+                    break;
+                case SDLK_SPACE:
+                    if (renderer) {
+                        Vec3 dir = normalize(camera_lookat - camera_pos);
+                        renderer->add_photon(camera_pos, dir);
+                    }
+                    break;
+                }
+                break;
+
+            case SDL_MOUSEBUTTONDOWN:
+                if (event.button.button == SDL_BUTTON_LEFT && renderer) {
+                    int mx = event.button.x, my = event.button.y;
+                    float u = ((mx * RENDER_W / DISPLAY_W) / (float)RENDER_W - 0.5f) * 2.0f;
+                    float v = ((my * RENDER_H / DISPLAY_H) / (float)RENDER_H - 0.5f) * 2.0f;
+
+                    Vec3 camera_dir = normalize(camera_lookat - camera_pos);
+                    Vec3 camera_right = normalize(cross(camera_dir, Vec3(0.0f, 1.0f, 0.0f)));
+                    Vec3 camera_up_real = cross(camera_right, camera_dir);
+
+                    Vec3 ray_dir = normalize(camera_right * u + camera_up_real * v + camera_dir);
+                    renderer->add_photon(camera_pos, ray_dir);
+                }
+                else if (event.button.button == SDL_BUTTON_RIGHT) {
+                    mouse_look = true;
+                    SDL_GetMouseState(&last_mouse_x, &last_mouse_y);
+                }
+                break;
+
+            case SDL_MOUSEBUTTONUP:
+                if (event.button.button == SDL_BUTTON_RIGHT) mouse_look = false;
+                break;
+
+            case SDL_MOUSEMOTION:
+                if (mouse_look) {
+                    int dx = event.motion.x - last_mouse_x;
+                    int dy = event.motion.y - last_mouse_y;
+                    last_mouse_x = event.motion.x;
+                    last_mouse_y = event.motion.y;
+
+                    camera_yaw += dx * 0.004f;
+                    camera_pitch -= dy * 0.004f;
+                    camera_pitch = clamp(camera_pitch, -1.5f, 1.5f);
+                }
+                break;
+
+            case SDL_MOUSEWHEEL:
+                if (event.wheel.y > 0) target_camera_distance *= 0.9f;
+                else if (event.wheel.y < 0) target_camera_distance *= 1.1f;
+                target_camera_distance = clamp(target_camera_distance, 3.0f * black_hole_mass, 100.0f * black_hole_mass);
+                break;
+            }
+        }
+
+        // Плавное движение камеры
+        if (fabsf(camera_distance - target_camera_distance) > 0.5f) {
+            camera_distance += (target_camera_distance - camera_distance) * 0.1f;
+        }
+
+        // Управление WASD
+        const Uint8* keys = SDL_GetKeyboardState(NULL);
+        float move_speed = 2.5f * black_hole_mass * delta_time * 60.0f;
+
+        Vec3 forward = normalize(camera_lookat - camera_pos);
+        Vec3 right = normalize(cross(forward, Vec3(0.0f, 1.0f, 0.0f)));
+        Vec3 up = cross(right, forward);
+
+        if (keys[SDL_SCANCODE_W]) camera_pos += forward * move_speed;
+        if (keys[SDL_SCANCODE_S]) camera_pos -= forward * move_speed;
+        if (keys[SDL_SCANCODE_A]) camera_pos -= right * move_speed;
+        if (keys[SDL_SCANCODE_D]) camera_pos += right * move_speed;
+        if (keys[SDL_SCANCODE_Q]) camera_pos += up * move_speed;
+        if (keys[SDL_SCANCODE_E]) camera_pos -= up * move_speed;
+
+        // Обновление расстояния камеры
+        camera_distance = length(camera_pos);
+        target_camera_distance = camera_distance;
+
+        // FPS
+        frame_count++;
+        auto fps_elapsed = chrono::duration<float>(current_time - last_fps_time).count();
+        if (fps_elapsed >= 0.5f) {
+            float fps = frame_count / fps_elapsed;
+            smooth_fps = smooth_fps * 0.7f + fps * 0.3f;
+            frame_count = 0;
+            last_fps_time = current_time;
+
+            char title[256];
+            snprintf(title, sizeof(title),
+                "ЧЕРНАЯ ДЫРА КЕРРА | M=%.1f, a=%.2f | FPS: %.0f | Фотонов: %zu",
+                black_hole_mass, black_hole_spin, smooth_fps,
+                renderer ? renderer->get_photon_count() : 0);
+            SDL_SetWindowTitle(window, title);
+        }
+
+        // Обновление текстуры
+        {
+            lock_guard<mutex> lock(render_mutex);
+            if (!render_buffer.empty()) {
+                SDL_UpdateTexture(texture, NULL, render_buffer.data(), RENDER_W * 3);
+            }
+        }
+
+        // Отрисовка
+        SDL_RenderClear(sdl_renderer);
+        SDL_Rect dest_rect = { 0, 0, DISPLAY_W, DISPLAY_H };
+        SDL_RenderCopy(sdl_renderer, texture, NULL, &dest_rect);
+        SDL_RenderPresent(sdl_renderer);
+
+        // Ограничение FPS
+        float frame_time = chrono::duration<float>(chrono::high_resolution_clock::now() - current_time).count();
+        if (frame_time < 1.0f / 60.0f) {
+            SDL_Delay((Uint32)((1.0f / 60.0f - frame_time) * 1000));
+        }
+    }
+
+    // Очистка
+    stop_render = true;
+    render_thread.join();
+
+    delete renderer;
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(sdl_renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
+    setConsoleGreen();
+    cout << "\nСимуляция завершена. Черная дыра стабильна!\n";
+    resetConsoleColor();
+
+    return 0;
+}
